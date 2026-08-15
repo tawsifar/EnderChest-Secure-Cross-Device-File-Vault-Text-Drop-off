@@ -471,6 +471,82 @@ class DatabaseService {
   }
 
   /**
+   * Deletes a specific file by ID and roomId.
+   */
+  public async deleteRoomFile(fileId: string, roomId: string): Promise<boolean> {
+    this.memoryFileBuffers.delete(fileId);
+
+    if (this.supabase && this.isConfigured) {
+      const { error } = await this.supabase
+        .from('room_files')
+        .delete()
+        .eq('id', fileId)
+        .eq('room_id', roomId);
+
+      if (error) {
+        console.error('[DB] Error deleting room file:', error);
+        return false;
+      }
+      return true;
+    }
+
+    const file = this.memoryFiles.get(fileId);
+    if (file && file.room_id === roomId) {
+      this.memoryFiles.delete(fileId);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Deletes all files for a room.
+   */
+  public async deleteRoomFiles(roomId: string): Promise<boolean> {
+    if (this.supabase && this.isConfigured) {
+      const { error } = await this.supabase
+        .from('room_files')
+        .delete()
+        .eq('room_id', roomId);
+
+      if (error) {
+        console.error('[DB] Error deleting room files:', error);
+        return false;
+      }
+    }
+
+    for (const [id, f] of this.memoryFiles.entries()) {
+      if (f.room_id === roomId) {
+        this.memoryFiles.delete(id);
+        this.memoryFileBuffers.delete(id);
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Permanently deletes a room and its associated records.
+   */
+  public async deleteRoom(roomId: string): Promise<boolean> {
+    await this.deleteRoomFiles(roomId);
+    await this.deleteDriveConnection(roomId);
+
+    if (this.supabase && this.isConfigured) {
+      const { error } = await this.supabase
+        .from('rooms')
+        .delete()
+        .eq('id', roomId);
+
+      if (error) {
+        console.error('[DB] Error deleting room:', error);
+        return false;
+      }
+      return true;
+    }
+
+    return this.memoryRooms.delete(roomId);
+  }
+
+  /**
    * Save file buffer in memory cache
    */
   public saveFileBuffer(fileId: string, buffer: Buffer): void {

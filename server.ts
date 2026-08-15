@@ -541,6 +541,92 @@ async function startServer() {
     }
   });
 
+  app.delete('/api/drive/file/:fileId', requireRoomAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const fileId = req.params.fileId;
+      const roomId = req.roomId!;
+      const file = await db.getRoomFileById(fileId);
+
+      if (!file || file.room_id !== roomId) {
+        res.status(404).json({ error: 'File not found or unauthorized.' });
+        return;
+      }
+
+      // 1. Delete from Google Drive if driveFileId exists
+      if (file.drive_file_id) {
+        const driveConnection = await db.getDriveConnection(roomId);
+        if (driveConnection) {
+          try {
+            const accessToken = await getValidDriveAccessToken(driveConnection);
+            const driveRes = await fetch(`https://www.googleapis.com/drive/v3/files/${file.drive_file_id}`, {
+              method: 'DELETE',
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+              },
+            });
+            console.log(`[Drive File Delete ${file.drive_file_id}]: status ${driveRes.status}`);
+          } catch (driveErr) {
+            console.warn('[Drive Delete Warning]:', driveErr);
+          }
+        }
+      }
+
+      // 2. Delete from DB and memory buffers
+      const deleted = await db.deleteRoomFile(fileId, roomId);
+      if (!deleted) {
+        res.status(500).json({ error: 'Failed to delete file from database.' });
+        return;
+      }
+
+      res.json({ success: true, deletedFileId: fileId, message: 'File deleted from vault and storage.' });
+    } catch (err: any) {
+      console.error('[API /drive/file DELETE error]:', err);
+      res.status(500).json({ error: err.message || 'Failed to delete file.' });
+    }
+  });
+
+  app.delete('/api/room', requireRoomAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const roomId = req.roomId!;
+      const files = await db.getRoomFiles(roomId);
+      const driveConnection = await db.getDriveConnection(roomId);
+
+      // 1. Delete all room files from Google Drive
+      if (driveConnection) {
+        try {
+          const accessToken = await getValidDriveAccessToken(driveConnection);
+          if (accessToken) {
+            for (const file of files) {
+              if (file.drive_file_id) {
+                try {
+                  const driveRes = await fetch(`https://www.googleapis.com/drive/v3/files/${file.drive_file_id}`, {
+                    method: 'DELETE',
+                    headers: {
+                      Authorization: `Bearer ${accessToken}`,
+                    },
+                  });
+                  console.log(`[Drive Room File Delete ${file.drive_file_id}]: status ${driveRes.status}`);
+                } catch (driveErr) {
+                  console.warn(`[Drive Delete File ${file.drive_file_id} failed]:`, driveErr);
+                }
+              }
+            }
+          }
+        } catch (tokenErr) {
+          console.warn('[Drive Token Fetch on Room Delete Error]:', tokenErr);
+        }
+      }
+
+      // 2. Permanently delete room from DB
+      await db.deleteRoom(roomId);
+
+      res.json({ success: true, message: 'Vault and all associated files permanently deleted.' });
+    } catch (err: any) {
+      console.error('[API /room DELETE error]:', err);
+      res.status(500).json({ error: err.message || 'Failed to delete room.' });
+    }
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },

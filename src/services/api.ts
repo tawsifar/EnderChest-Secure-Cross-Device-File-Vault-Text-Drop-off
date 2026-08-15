@@ -147,6 +147,36 @@ class ApiService {
   }
 
   /**
+   * Delete a specific file from room and Google Drive.
+   */
+  async deleteFile(token: string, fileId: string): Promise<void> {
+    const res = await fetch(`/api/drive/file/${fileId}`, {
+      method: 'DELETE',
+      headers: this.getHeaders(token),
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to delete file');
+    }
+  }
+
+  /**
+   * Permanently delete entire room and all its files from Google Drive.
+   */
+  async deleteRoom(token: string): Promise<void> {
+    const res = await fetch('/api/room', {
+      method: 'DELETE',
+      headers: this.getHeaders(token),
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to delete vault');
+    }
+  }
+
+  /**
    * Disconnect Secure Storage from room.
    */
   async disconnectDrive(token: string): Promise<void> {

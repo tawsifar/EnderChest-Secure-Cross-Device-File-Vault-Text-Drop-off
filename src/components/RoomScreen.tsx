@@ -19,9 +19,12 @@ import {
   RefreshCw,
   AlertCircle,
   Sparkles,
-  Layers
+  Layers,
+  Trash2,
+  AlertTriangle,
+  X
 } from 'lucide-react';
-import { RoomData } from '../types.ts';
+import { RoomData, RoomFile } from '../types.ts';
 import { api } from '../services/api.ts';
 import EnderChestLogo from './EnderChestLogo.tsx';
 
@@ -56,6 +59,14 @@ export default function RoomScreen({
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
+
+  // Deletion States
+  const [fileToDelete, setFileToDelete] = useState<RoomFile | null>(null);
+  const [isDeletingFileId, setIsDeletingFileId] = useState<string | null>(null);
+  const [showDeleteRoomModal, setShowDeleteRoomModal] = useState(false);
+  const [isDeletingRoom, setIsDeletingRoom] = useState(false);
+  const [showClearTextModal, setShowClearTextModal] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // General state
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -109,6 +120,54 @@ export default function RoomScreen({
       setSaveError(err.message || 'Failed to save text');
     } finally {
       setIsSavingText(false);
+    }
+  };
+
+  // Handle clearing text slate
+  const handleClearText = async () => {
+    setIsSavingText(true);
+    setSaveError(null);
+    try {
+      await api.saveRoomText(sessionToken, '');
+      setText('');
+      setLastSavedText('');
+      setShowClearTextModal(false);
+    } catch (err: any) {
+      setSaveError(err.message || 'Failed to clear text slate');
+    } finally {
+      setIsSavingText(false);
+    }
+  };
+
+  // Handle deleting a single file
+  const handleDeleteFile = async (file: RoomFile) => {
+    setIsDeletingFileId(file.id);
+    setDeleteError(null);
+    try {
+      await api.deleteFile(sessionToken, file.id);
+      setRoomData((prev) => ({
+        ...prev,
+        files: prev.files.filter((f) => f.id !== file.id),
+      }));
+      setFileToDelete(null);
+    } catch (err: any) {
+      setDeleteError(err.message || 'Failed to delete file from vault and Drive');
+    } finally {
+      setIsDeletingFileId(null);
+    }
+  };
+
+  // Handle deleting the entire room
+  const handleDeleteRoom = async () => {
+    setIsDeletingRoom(true);
+    setDeleteError(null);
+    try {
+      await api.deleteRoom(sessionToken);
+      setShowDeleteRoomModal(false);
+      onLeaveRoom();
+    } catch (err: any) {
+      setDeleteError(err.message || 'Failed to delete vault and Drive data');
+      setIsDeletingRoom(false);
     }
   };
 
@@ -255,25 +314,25 @@ export default function RoomScreen({
               <button
                 id="copy-room-code-btn"
                 onClick={copyRoomCode}
-                className="p-1.5 hover:bg-white/10 text-slate-400 hover:text-white rounded-lg transition-colors cursor-pointer"
+                className="p-2 bg-black/50 hover:bg-black/75 border border-white/10 hover:border-emerald-500/40 text-slate-300 hover:text-white rounded-lg transition-all cursor-pointer backdrop-blur-sm shadow-sm active:scale-95 flex items-center justify-center"
                 title="Copy room code"
               >
                 {copiedCode ? (
-                  <Check className="w-5 h-5 text-emerald-400" />
+                  <Check className="w-4 h-4 text-emerald-400" />
                 ) : (
-                  <Copy className="w-5 h-5" />
+                  <Copy className="w-4 h-4" />
                 )}
               </button>
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 self-stretch sm:self-auto justify-end">
+        <div className="flex items-center gap-2.5 self-stretch sm:self-auto justify-end flex-wrap">
           <button
             id="refresh-room-btn"
             onClick={() => refreshRoom(false)}
             disabled={isRefreshing}
-            className="p-2.5 bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 rounded-lg transition-colors cursor-pointer backdrop-blur-sm shadow-sm"
+            className="p-2.5 bg-black/40 hover:bg-black/60 border border-white/10 text-slate-300 rounded-lg transition-colors cursor-pointer backdrop-blur-sm shadow-sm active:scale-95"
             title="Sync chest inventory"
           >
             <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-emerald-400' : ''}`} />
@@ -282,10 +341,21 @@ export default function RoomScreen({
           <button
             id="leave-room-btn"
             onClick={onLeaveRoom}
-            className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#450a0a]/30 hover:bg-red-900/40 border border-red-500/30 text-red-400 font-mono text-sm font-medium rounded-lg transition-colors cursor-pointer backdrop-blur-sm shadow-sm"
+            className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 font-mono text-sm font-medium rounded-lg transition-colors cursor-pointer backdrop-blur-sm shadow-sm active:scale-95"
+            title="Leave vault (data remains saved)"
           >
-            <LogOut className="w-4 h-4" />
+            <LogOut className="w-4 h-4 text-slate-400" />
             <span className="hidden sm:inline">Close Vault</span>
+          </button>
+
+          <button
+            id="destroy-room-btn"
+            onClick={() => setShowDeleteRoomModal(true)}
+            className="inline-flex items-center gap-2 px-3.5 py-2.5 bg-red-950/40 hover:bg-red-900/60 border border-red-500/40 text-red-300 font-mono text-sm font-medium rounded-lg transition-all cursor-pointer backdrop-blur-sm shadow-sm active:scale-95"
+            title="Permanently delete entire vault and all its Drive files"
+          >
+            <Trash2 className="w-4 h-4 text-red-400" />
+            <span className="hidden sm:inline">Delete Room</span>
           </button>
         </div>
       </div>
@@ -303,31 +373,43 @@ export default function RoomScreen({
                 SHARED TEXT SLATE
               </h2>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               {isTextDirty && (
                 <span className="text-[11px] font-mono text-amber-300 bg-amber-950/60 px-2 py-0.5 rounded border border-amber-600/40">
                   Unsaved changes
                 </span>
               )}
               {text && (
-                <button
-                  id="copy-text-btn"
-                  onClick={copyTextToClipboard}
-                  className="p-1.5 hover:bg-white/5 text-slate-400 hover:text-slate-200 rounded transition-colors cursor-pointer text-xs font-mono flex items-center gap-1.5"
-                  title="Copy text"
-                >
-                  {copiedText ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-emerald-400" />
-                      <span className="text-emerald-300">Copied</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="w-3.5 h-3.5" />
-                      <span>Copy</span>
-                    </>
-                  )}
-                </button>
+                <>
+                  <button
+                    id="copy-text-btn"
+                    onClick={copyTextToClipboard}
+                    className="px-2.5 py-1.5 bg-black/50 hover:bg-black/75 border border-white/10 hover:border-emerald-500/40 text-slate-300 hover:text-white rounded-lg transition-all cursor-pointer text-xs font-mono flex items-center gap-1.5 backdrop-blur-sm shadow-sm active:scale-95"
+                    title="Copy text"
+                  >
+                    {copiedText ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        <span className="text-emerald-300">Copied</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copy</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    id="clear-text-btn"
+                    onClick={() => setShowClearTextModal(true)}
+                    className="px-2.5 py-1.5 bg-black/50 hover:bg-red-950/50 border border-white/10 hover:border-red-500/40 text-slate-400 hover:text-red-300 rounded-lg transition-all cursor-pointer text-xs font-mono flex items-center gap-1.5 backdrop-blur-sm shadow-sm active:scale-95"
+                    title="Clear text slate"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-red-400/80" />
+                    <span>Clear</span>
+                  </button>
+                </>
               )}
             </div>
           </div>
@@ -487,6 +569,13 @@ export default function RoomScreen({
               </div>
             )}
 
+            {deleteError && (
+              <div className="p-3 bg-red-950/40 border border-red-800/60 text-red-300 text-xs rounded-xl flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{deleteError}</span>
+              </div>
+            )}
+
             {/* Uploaded Files Inventory */}
             <div className="flex-1 flex flex-col pt-2">
               <div className="flex items-center justify-between mb-3">
@@ -512,7 +601,7 @@ export default function RoomScreen({
                           {getFileIcon(file.name, file.mimeType)}
                         </div>
                         <div className="min-w-0">
-                          <div className="text-[13px] font-mono font-medium text-slate-200 truncate max-w-[200px] sm:max-w-xs mb-0.5" title={file.name}>
+                          <div className="text-[13px] font-mono font-medium text-slate-200 truncate max-w-[160px] sm:max-w-xs mb-0.5" title={file.name}>
                             {file.name}
                           </div>
                           <div className="text-[11px] font-sans text-slate-500 flex items-center gap-1.5">
@@ -523,16 +612,32 @@ export default function RoomScreen({
                         </div>
                       </div>
 
-                      <a
-                        id={`download-file-${file.id}`}
-                        href={`${file.downloadUrl}${file.downloadUrl.includes('?') ? '&' : '?'}token=${sessionToken}`}
-                        download={file.name}
-                        className="inline-flex items-center gap-1.5 px-3.5 py-2 text-emerald-400 hover:text-emerald-300 text-[12px] font-mono rounded-lg transition-colors cursor-pointer shrink-0 border border-emerald-500/30 hover:bg-emerald-500/10"
-                        title="Download file"
-                      >
-                        <Download className="w-4 h-4" />
-                        <span className="hidden sm:inline">Download</span>
-                      </a>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <a
+                          id={`download-file-${file.id}`}
+                          href={`${file.downloadUrl}${file.downloadUrl.includes('?') ? '&' : '?'}token=${sessionToken}`}
+                          download={file.name}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 text-emerald-400 hover:text-emerald-300 text-[12px] font-mono rounded-lg transition-colors cursor-pointer border border-emerald-500/30 hover:bg-emerald-500/10"
+                          title="Download file"
+                        >
+                          <Download className="w-4 h-4" />
+                          <span className="hidden sm:inline">Download</span>
+                        </a>
+
+                        <button
+                          id={`delete-file-${file.id}`}
+                          onClick={() => setFileToDelete(file)}
+                          disabled={isDeletingFileId === file.id}
+                          className="p-2 text-slate-400 hover:text-red-300 bg-black/40 hover:bg-red-950/50 border border-white/10 hover:border-red-500/40 rounded-lg transition-all cursor-pointer active:scale-95"
+                          title="Delete file from vault and Google Drive"
+                        >
+                          {isDeletingFileId === file.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin text-red-400" />
+                          ) : (
+                            <Trash2 className="w-4 h-4 text-red-400/80 hover:text-red-300" />
+                          )}
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -542,6 +647,191 @@ export default function RoomScreen({
         </div>
       </div>
     </div>
+
+    {/* ========================================================================= */}
+    {/* Modal: Delete Single File Confirmation */}
+    {/* ========================================================================= */}
+    {fileToDelete && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
+        <div className="glass max-w-md w-full p-6 rounded-2xl border border-red-500/30 shadow-2xl relative">
+          <div className="flex items-center gap-3 mb-4 text-red-400">
+            <div className="p-2.5 bg-red-950/60 border border-red-500/30 rounded-xl">
+              <Trash2 className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="font-mono text-base font-bold text-slate-100">
+                Delete File From Vault
+              </h3>
+              <p className="text-xs text-red-300/80 font-mono">Permanent deletion from Google Drive</p>
+            </div>
+          </div>
+
+          <div className="p-3.5 bg-black/50 border border-white/5 rounded-xl mb-5">
+            <div className="text-sm font-mono text-slate-200 font-semibold truncate mb-1" title={fileToDelete.name}>
+              {fileToDelete.name}
+            </div>
+            <div className="text-xs font-mono text-slate-400">
+              Size: <span className="text-slate-300">{formatBytes(fileToDelete.size)}</span>
+            </div>
+          </div>
+
+          <p className="text-xs text-slate-300 mb-6 font-sans leading-relaxed">
+            Are you sure you want to delete this file? It will be permanently removed from this EnderChest vault and deleted from the linked Google Drive cloud storage.
+          </p>
+
+          <div className="flex items-center justify-end gap-3 font-mono text-xs">
+            <button
+              id="cancel-delete-file-btn"
+              onClick={() => setFileToDelete(null)}
+              disabled={!!isDeletingFileId}
+              className="px-4 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 rounded-xl transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              id="confirm-delete-file-btn"
+              onClick={() => handleDeleteFile(fileToDelete)}
+              disabled={!!isDeletingFileId}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-xl transition-colors cursor-pointer shadow-lg shadow-red-900/40"
+            >
+              {isDeletingFileId ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Deleting...</span>
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete File</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* ========================================================================= */}
+    {/* Modal: Delete Entire Room Confirmation */}
+    {/* ========================================================================= */}
+    {showDeleteRoomModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fadeIn">
+        <div className="glass max-w-lg w-full p-6 sm:p-7 rounded-2xl border border-red-500/40 shadow-2xl relative">
+          <div className="flex items-center gap-3 mb-4 text-red-400">
+            <div className="p-3 bg-red-950/80 border border-red-500/40 rounded-xl shadow-[0_0_20px_rgba(239,68,68,0.25)]">
+              <AlertTriangle className="w-6 h-6 text-red-400" />
+            </div>
+            <div>
+              <h3 className="font-mono text-lg font-bold text-slate-100">
+                Permanently Delete Vault
+              </h3>
+              <p className="text-xs text-red-300 font-mono">Destroy room code: {roomCode}</p>
+            </div>
+          </div>
+
+          <div className="p-4 bg-red-950/30 border border-red-500/30 rounded-xl mb-5 space-y-2">
+            <div className="text-xs font-mono font-semibold text-red-200">
+              ⚠️ This irreversible action will:
+            </div>
+            <ul className="text-xs font-mono text-slate-300 space-y-1.5 list-disc list-inside">
+              <li>
+                Delete <strong className="text-white">{roomData.files.length} file{roomData.files.length === 1 ? '' : 's'}</strong> permanently from Google Drive
+              </li>
+              <li>Erase the shared text slate completely</li>
+              <li>Invalidate all active session tokens for this vault</li>
+              <li>Purge room database records from Supabase</li>
+            </ul>
+          </div>
+
+          <p className="text-xs text-slate-300 mb-6 font-sans leading-relaxed">
+            Anyone currently connected to vault <strong className="font-mono text-white">{roomCode}</strong> on any device will lose access immediately.
+          </p>
+
+          <div className="flex items-center justify-end gap-3 font-mono text-xs">
+            <button
+              id="cancel-delete-room-btn"
+              onClick={() => setShowDeleteRoomModal(false)}
+              disabled={isDeletingRoom}
+              className="px-4 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 rounded-xl transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              id="confirm-delete-room-btn"
+              onClick={handleDeleteRoom}
+              disabled={isDeletingRoom}
+              className="inline-flex items-center gap-2 px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-xl transition-all cursor-pointer shadow-lg shadow-red-900/50 active:scale-95"
+            >
+              {isDeletingRoom ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Destroying Vault & Drive Data...</span>
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-4 h-4" />
+                  <span>Destroy Vault & Storage</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* ========================================================================= */}
+    {/* Modal: Clear Text Slate Confirmation */}
+    {/* ========================================================================= */}
+    {showClearTextModal && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
+        <div className="glass max-w-md w-full p-6 rounded-2xl border border-white/10 shadow-2xl relative">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2.5 bg-amber-950/60 border border-amber-500/30 rounded-xl">
+              <FileText className="w-5 h-5 text-amber-400" />
+            </div>
+            <div>
+              <h3 className="font-mono text-base font-bold text-slate-100">
+                Clear Text Slate
+              </h3>
+              <p className="text-xs text-slate-400 font-mono">Erase all notes in this vault</p>
+            </div>
+          </div>
+
+          <p className="text-xs text-slate-300 mb-6 font-sans leading-relaxed">
+            Are you sure you want to clear the entire text slate? This will overwrite the saved notes in this room with an empty slate for all connected devices.
+          </p>
+
+          <div className="flex items-center justify-end gap-3 font-mono text-xs">
+            <button
+              id="cancel-clear-text-btn"
+              onClick={() => setShowClearTextModal(false)}
+              disabled={isSavingText}
+              className="px-4 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-slate-300 rounded-xl transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              id="confirm-clear-text-btn"
+              onClick={handleClearText}
+              disabled={isSavingText}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-black font-semibold rounded-xl transition-colors cursor-pointer shadow-lg shadow-amber-900/30"
+            >
+              {isSavingText ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Clearing...</span>
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Clear Slate</span>
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
     </div>
   );
 }
