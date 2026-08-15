@@ -1,0 +1,7 @@
+{
+  "name": "EnderChest",
+  "description": "A Minecraft-themed no-login text and file drop-off tool with secure centralized cloud storage.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

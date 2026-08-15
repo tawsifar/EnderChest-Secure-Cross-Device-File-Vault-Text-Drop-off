@@ -1,0 +1,158 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-pixel: 'Silkscreen', monospace;
+    --font-mono: 'JetBrains Mono', monospace;
+    --font-sans: 'Plus Jakarta Sans', sans-serif;
+  }
+}
+
+.font-pixel {
+  font-family: var(--font-pixel);
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+/* Minecraft Inset Slot Style */
+.mc-slot {
+  background: #111722;
+  border-top: 2px solid #080c14;
+  border-left: 2px solid #080c14;
+  border-right: 2px solid #232e42;
+  border-bottom: 2px solid #232e42;
+}
+
+/* Obsidian Chest Bevel Style */
+.mc-panel {
+  background: #131a26;
+  border-top: 2px solid #2e3b52;
+  border-left: 2px solid #2e3b52;
+  border-right: 2px solid #0a0e17;
+  border-bottom: 2px solid #0a0e17;
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.7);
+}
+
+.mc-btn-primary {
+  background: #0d9488;
+  border-top: 2px solid #2dd4bf;
+  border-left: 2px solid #2dd4bf;
+  border-right: 2px solid #0f766e;
+  border-bottom: 2px solid #0f766e;
+  box-shadow: 0 4px 12px rgba(13, 148, 136, 0.25);
+  transition: all 0.1s ease-in-out;
+}
+.mc-btn-primary:hover:not(:disabled) {
+  background: #14b8a6;
+  transform: translateY(-1px);
+}
+.mc-btn-primary:active:not(:disabled) {
+  border-top: 2px solid #0f766e;
+  border-left: 2px solid #0f766e;
+  border-right: 2px solid #2dd4bf;
+  border-bottom: 2px solid #2dd4bf;
+  transform: translateY(1px);
+}
+
+.mc-btn-secondary {
+  background: #1e293b;
+  border-top: 2px solid #334155;
+  border-left: 2px solid #334155;
+  border-right: 2px solid #0f172a;
+  border-bottom: 2px solid #0f172a;
+  transition: all 0.1s ease-in-out;
+}
+.mc-btn-secondary:hover:not(:disabled) {
+  background: #273549;
+  transform: translateY(-1px);
+}
+
+.mc-btn-ender {
+  background: #6366f1;
+  border-top: 2px solid #818cf8;
+  border-left: 2px solid #818cf8;
+  border-right: 2px solid #4338ca;
+  border-bottom: 2px solid #4338ca;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
+}
+.mc-btn-ender:hover:not(:disabled) {
+  background: #4f46e5;
+}
+
+/* Floating Ender Particle Animation */
+@keyframes float-particle {
+  0% {
+    transform: translateY(0) scale(0.8) rotate(0deg);
+    opacity: 0;
+  }
+  30% {
+    opacity: 0.8;
+  }
+  70% {
+    opacity: 0.8;
+  }
+  100% {
+    transform: translateY(-120px) scale(1.2) rotate(45deg);
+    opacity: 0;
+  }
+}
+
+.animate-ender-float {
+  animation: float-particle 4s infinite ease-in;
+}
+
+/* Eye of Ender Pulse */
+@keyframes eye-glow {
+  0%, 100% {
+    filter: drop-shadow(0 0 6px rgba(45, 212, 191, 0.7));
+  }
+  50% {
+    filter: drop-shadow(0 0 14px rgba(45, 212, 191, 1)) drop-shadow(0 0 20px rgba(168, 85, 247, 0.5));
+  }
+}
+
+.animate-eye-glow {
+  animation: eye-glow 3s infinite ease-in-out;
+}
+
+
+@keyframes spin-border {
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.silver-neon-btn {
+  position: relative;
+  overflow: hidden;
+  z-index: 1;
+  background-color: #0f172a; /* Slate 900 solid */
+  border: none !important;
+}
+
+.silver-neon-btn::before {
+  content: "";
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: conic-gradient(from 0deg, transparent 70%, rgba(226, 232, 240, 0.6) 90%, rgba(255, 255, 255, 1) 100%);
+  animation: spin-border 2.5s linear infinite;
+  z-index: -2;
+}
+
+.silver-neon-btn::after {
+  content: "";
+  position: absolute;
+  inset: 1.5px; /* thin layer */
+  background-color: inherit;
+  border-radius: inherit;
+  z-index: -1;
+}
+
+.silver-neon-btn:hover {
+  background-color: #1e293b; /* Slate 800 solid hover */
+}
