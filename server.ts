@@ -3,21 +3,90 @@ import { google } from 'googleapis';
 import crypto from 'crypto';
 import path from 'path';
 import https from 'https';
-import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
 import { hashRoomCode, createSessionToken, verifySessionToken } from './server/security.ts';
 import { db, SUPABASE_SCHEMA_SQL } from './server/db.ts';
 
-// Configure multer for file uploads (in-memory for buffer handling)
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 25 * 1024 * 1024, // 25MB limit
-  },
-});
-
 interface AuthenticatedRequest extends Request {
   roomId?: string;
+}
+
+// In-memory rate limiter to thwart brute force and denial-of-service
+interface RateLimitRecord {
+  count: number;
+  resetTime: number;
+}
+
+function createRateLimiter(options: { windowMs: number; max: number; message: string }) {
+  const hits = new Map<string, RateLimitRecord>();
+
+  // Cleanup expired entries periodically to prevent memory leaks
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, record] of hits.entries()) {
+      if (now > record.resetTime) {
+        hits.delete(key);
+      }
+    }
+  }, options.windowMs).unref();
+
+  return (req: Request, res: Response, next: NextFunction) => {
+    const ip = req.ip || req.socket.remoteAddress || 'unknown';
+    const now = Date.now();
+    let record = hits.get(ip);
+
+    if (!record || now > record.resetTime) {
+      record = { count: 1, resetTime: now + options.windowMs };
+      hits.set(ip, record);
+    } else {
+      record.count += 1;
+    }
+
+    res.setHeader('X-RateLimit-Limit', options.max);
+    res.setHeader('X-RateLimit-Remaining', Math.max(0, options.max - record.count));
+    res.setHeader('X-RateLimit-Reset', Math.ceil(record.resetTime / 1000));
+
+    if (record.count > options.max) {
+      res.status(429).json({ error: options.message });
+      return;
+    }
+
+    next();
+  };
+}
+
+const enterRoomLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: 'Too many vault entry attempts from this IP. Please wait a minute and try again.',
+});
+
+const globalApiLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  max: 300,
+  message: 'Too many requests. Please slow down.',
+});
+
+// Sanitize filename to prevent path traversal or header injection
+function sanitizeFileName(inputName: string): string {
+  if (!inputName || typeof inputName !== 'string') return 'file';
+  const basename = path.basename(inputName.trim());
+  const sanitized = basename
+    .replace(/[\0\x00-\x1f\x7f]/g, '')
+    .replace(/[<>:"/\\|?*]/g, '_')
+    .slice(0, 255);
+  return sanitized || 'file';
+}
+
+// Escape HTML characters to prevent Reflected XSS
+function escapeHtml(str: string): string {
+  if (!str || typeof str !== 'string') return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
 // Authentication middleware using Room Session Token
@@ -46,6 +115,19 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // Security Headers & Server Hardening
+  app.disable('x-powered-by');
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('X-XSS-Protection', '0');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    next();
+  });
+
+  // Global rate limit for API endpoints
+  app.use('/api', globalApiLimiter);
+
   // JSON Body parsing
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true }));
@@ -69,7 +151,7 @@ async function startServer() {
     });
   });
 
-  app.post('/api/room/enter', async (req, res) => {
+  app.post('/api/room/enter', enterRoomLimiter, async (req, res) => {
     try {
       const { code } = req.body;
       if (!code || typeof code !== 'string' || !code.trim()) {
@@ -77,7 +159,13 @@ async function startServer() {
         return;
       }
 
-      const codeHash = hashRoomCode(code);
+      const trimmedCode = code.trim();
+      if (trimmedCode.length > 100) {
+        res.status(400).json({ error: 'Room code cannot exceed 100 characters.' });
+        return;
+      }
+
+      const codeHash = hashRoomCode(trimmedCode);
       const roomInfo = await db.findOrCreateRoomByHash(codeHash);
       const room = roomInfo.room;
       const sessionToken = createSessionToken(room.id);
@@ -112,7 +200,7 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('[API /room/enter error]:', err);
-      res.status(500).json({ error: err.message || 'Failed to enter room.' });
+      res.status(500).json({ error: 'Failed to enter room. Please try again.' });
     }
   });
 
@@ -170,6 +258,11 @@ async function startServer() {
         return;
       }
 
+      if (text.length > 200000) {
+        res.status(400).json({ error: 'Text content exceeds the 200KB maximum size.' });
+        return;
+      }
+
       const result = await db.updateRoomText(roomId, text);
       res.json({
         success: true,
@@ -178,7 +271,7 @@ async function startServer() {
       });
     } catch (err: any) {
       console.error('[API /room/text error]:', err);
-      res.status(500).json({ error: err.message || 'Failed to save room text.' });
+      res.status(500).json({ error: 'Failed to save room text.' });
     }
   });
 
@@ -210,11 +303,11 @@ async function startServer() {
     const { code, state: roomId, error } = req.query;
 
     if (error) {
-      res.status(400).send(`Secure Vault authorization failed: ${error}`);
+      res.status(400).type('text/plain').send(`Secure Vault authorization failed: ${escapeHtml(String(error))}`);
       return;
     }
     if (!code || !roomId) {
-      res.status(400).send('Missing authorization code or room state.');
+      res.status(400).type('text/plain').send('Missing authorization code or room state.');
       return;
     }
 
@@ -274,7 +367,7 @@ async function startServer() {
       `);
     } catch (err: any) {
       console.error('[API /drive/callback error]:', err);
-      res.status(500).send('Failed to process Secure Vault connection callback: ' + err.message);
+      res.status(500).type('text/plain').send('Failed to process Secure Vault connection callback: ' + escapeHtml(err.message || 'Server error'));
     }
   });
 
@@ -338,8 +431,8 @@ async function startServer() {
       const roomId = req.roomId!;
       const { fileName, fileSize, mimeType } = req.body;
 
-      if (!fileName || !fileSize) {
-        res.status(400).json({ error: 'File name and size are required.' });
+      if (!fileName || typeof fileName !== 'string' || typeof fileSize !== 'number' || fileSize <= 0) {
+        res.status(400).json({ error: 'Valid file name and size are required.' });
         return;
       }
 
@@ -348,16 +441,18 @@ async function startServer() {
         return;
       }
 
+      const safeName = sanitizeFileName(fileName);
+
       let driveConnection = await db.getDriveConnection(roomId);
       if (!driveConnection) {
-        res.status(400).json({ error: 'Secure Storage must be configured by an administrator before uploading files.' });
+        res.status(400).json({ error: 'Secure Storage must be configured before uploading files.' });
         return;
       }
 
       const accessToken = await getValidDriveAccessToken(driveConnection);
 
       const metadata = {
-        name: fileName,
+        name: safeName,
         parents: [driveConnection.drive_folder_id || 'root']
       };
 
@@ -397,8 +492,14 @@ async function startServer() {
       const roomId = req.roomId!;
       const { fileName, fileSize, mimeType, driveFileId, webViewLink, webContentLink } = req.body;
 
-      if (!fileName || !driveFileId) {
+      if (!fileName || typeof fileName !== 'string' || !driveFileId || typeof driveFileId !== 'string') {
         res.status(400).json({ error: 'Missing required file data.' });
+        return;
+      }
+
+      const safeName = sanitizeFileName(fileName);
+      if (!/^[a-zA-Z0-9_\-]+$/.test(driveFileId)) {
+        res.status(400).json({ error: 'Invalid storage identifier.' });
         return;
       }
 
@@ -428,9 +529,9 @@ async function startServer() {
 
       const savedFile = await db.addRoomFile({
         room_id: roomId,
-        file_name: fileName,
-        file_size: fileSize,
-        mime_type: mimeType,
+        file_name: safeName,
+        file_size: typeof fileSize === 'number' ? fileSize : 0,
+        mime_type: typeof mimeType === 'string' ? mimeType.slice(0, 100) : 'application/octet-stream',
         drive_file_id: driveFileId,
         download_url: webContentLink || webViewLink || '',
       });
@@ -569,6 +670,7 @@ async function startServer() {
             res.setHeader('Pragma', 'no-cache');
             res.setHeader('Expires', '0');
             res.setHeader('X-Content-Type-Options', 'nosniff');
+            res.setHeader('Referrer-Policy', 'no-referrer');
             
             // Set Content-Length if provided by the final storage server
             if (driveRes.headers['content-length']) {
@@ -707,9 +809,13 @@ async function startServer() {
 
   app.use((err: any, req: Request, res: Response, next: NextFunction) => {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(413).json({ error: 'File exceeds the 25 MB maximum size.' });
+      res.status(413).json({ error: 'File exceeds the 25 MB maximum size.' });
+      return;
     }
-    next(err);
+    console.error('[Unhandled Server Error]:', err?.message || err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Internal server error occurred.' });
+    }
   });
 
   if (process.env.NODE_ENV !== 'production') {

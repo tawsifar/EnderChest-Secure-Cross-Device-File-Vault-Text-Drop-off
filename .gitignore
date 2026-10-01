@@ -14,3 +14,10 @@ coverage/
 assets/.aistudio/
 *.aistudio
 
+# Local runtime data & vaults
+data/
+*.tmp
+*.temp
+vault-storage.json
+
+

@@ -181,42 +181,7 @@ class DatabaseService {
         }
         console.log(`[DB] Loaded persistent local vault storage (${this.memoryRooms.size} rooms, ${this.memoryFiles.size} files).`);
       } else {
-        // Pre-seed known sample room so historical tests work seamlessly
-        const seedRoomId = '03df4af6-6775-46a4-97fc-cd90a16b91d8';
-        const seedCodeHash = 'c362fedb73afcf8263f6d7358c72ffed44705b0f983cbbf1338000b1ac1246c8'; // obsidian-vault-404
-        this.memoryRooms.set(seedRoomId, {
-          id: seedRoomId,
-          code_hash: seedCodeHash,
-          saved_text: '',
-          created_at: '2026-08-30T14:00:00.000Z',
-          updated_at: '2026-08-30T14:00:00.000Z',
-          last_accessed_at: new Date().toISOString(),
-        });
-
-        // Pre-seed known test files associated with this room
-        const file1: RoomFileRecord = {
-          id: '6cc02db1-ea0b-4f26-82c1-89a73ed0fd08',
-          room_id: seedRoomId,
-          file_name: '5.pdf',
-          file_size: 21865115,
-          mime_type: 'application/pdf',
-          drive_file_id: '1akPxA-OO7G4qe4bmk3LeprB3hB4-GZYy',
-          download_url: 'https://drive.google.com/uc?id=1akPxA-OO7G4qe4bmk3LeprB3hB4-GZYy&export=download',
-          created_at: '2026-08-30T14:31:34.613+00:00'
-        };
-        const file2: RoomFileRecord = {
-          id: 'acd5b70d-6232-4bff-8d65-b56a8555205c',
-          room_id: seedRoomId,
-          file_name: '5.pdf',
-          file_size: 21865115,
-          mime_type: 'application/pdf',
-          drive_file_id: '1q4Yvvehg_3SatKyC9MOGaDuqpD7PXjG-',
-          download_url: 'https://drive.google.com/uc?id=1q4Yvvehg_3SatKyC9MOGaDuqpD7PXjG-&export=download',
-          created_at: '2026-08-30T14:07:43.09+00:00'
-        };
-        this.memoryFiles.set(file1.id, file1);
-        this.memoryFiles.set(file2.id, file2);
-
+        // Initialize clean persistent storage
         this.persistLocalData();
       }
     } catch (err) {
