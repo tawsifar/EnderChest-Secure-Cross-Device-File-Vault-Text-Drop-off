@@ -1,5 +1,8 @@
 import express, { Request, Response, NextFunction } from 'express';
+import { google } from 'googleapis';
+import crypto from 'crypto';
 import path from 'path';
+import https from 'https';
 import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
 import { hashRoomCode, createSessionToken, verifySessionToken } from './server/security.ts';
@@ -9,7 +12,7 @@ import { db, SUPABASE_SCHEMA_SQL } from './server/db.ts';
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 200 * 1024 * 1024, // 200MB limit
+    fileSize: 25 * 1024 * 1024, // 25MB limit
   },
 });
 
@@ -75,7 +78,8 @@ async function startServer() {
       }
 
       const codeHash = hashRoomCode(code);
-      const room = await db.findOrCreateRoomByHash(codeHash);
+      const roomInfo = await db.findOrCreateRoomByHash(codeHash);
+      const room = roomInfo.room;
       const sessionToken = createSessionToken(room.id);
       const driveConnection = await db.getDriveConnection(room.id);
       const files = await db.getRoomFiles(room.id);
@@ -194,7 +198,7 @@ async function startServer() {
       return;
     }
 
-    const scope = encodeURIComponent('https://www.googleapis.com/auth/drive.file email profile');
+    const scope = encodeURIComponent('https://www.googleapis.com/auth/drive email profile');
     const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(
       redirectUri
     )}&response_type=code&scope=${scope}&access_type=offline&prompt=consent&state=${roomId}`;
@@ -339,6 +343,11 @@ async function startServer() {
         return;
       }
 
+      if (fileSize > 25 * 1024 * 1024) {
+        res.status(413).json({ error: 'File size exceeds the 25 MB limit.' });
+        return;
+      }
+
       let driveConnection = await db.getDriveConnection(roomId);
       if (!driveConnection) {
         res.status(400).json({ error: 'Secure Storage must be configured by an administrator before uploading files.' });
@@ -477,67 +486,136 @@ async function startServer() {
         return;
       }
 
-      // 1. High-speed cache: Serve directly from server memory buffer if available
-      const cachedBuffer = db.getFileBuffer(fileId);
-      if (cachedBuffer) {
-        res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
-        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(file.file_name)}"`);
-        res.setHeader('Content-Length', cachedBuffer.length);
-        res.send(cachedBuffer);
+      const driveConnection = await db.getDriveConnection(req.roomId!);
+      if (!driveConnection || !file.drive_file_id) {
+        res.status(404).send('File content not available.');
         return;
       }
 
-      // 2. Stream from Google Drive with robust token management
-      let driveConnection = await db.getDriveConnection(req.roomId);
-      if (driveConnection && file.drive_file_id) {
-        let accessToken = await getValidDriveAccessToken(driveConnection);
+      // Check max file size limit (25MB)
+      if (file.file_size && file.file_size > 25 * 1024 * 1024) {
+        res.status(413).send('File size exceeds the 25 MB limit.');
+        return;
+      }
 
-        let driveRes = await fetch(`https://www.googleapis.com/drive/v3/files/${file.drive_file_id}?alt=media`, {
-          headers: {
-            Authorization: `Bearer ${accessToken}`
+      const accessToken = await getValidDriveAccessToken(driveConnection);
+
+      const downloadFileWithRedirect = (token: string, fileIdStr: string, depth = 0): Promise<boolean> => {
+        return new Promise((resolve) => {
+          if (depth > 5) {
+            console.error('Too many redirects');
+            resolve(false);
+            return;
           }
-        });
 
-        // If 401 Unauthorized, force refresh token and retry
-        if (driveRes.status === 401 && driveConnection.refresh_token) {
-          console.warn('[Drive Download]: 401 Unauthorized, refreshing token and retrying...');
-          driveConnection.token_expiry = new Date(0).toISOString();
-          accessToken = await getValidDriveAccessToken(driveConnection);
-          driveRes = await fetch(`https://www.googleapis.com/drive/v3/files/${file.drive_file_id}?alt=media`, {
-            headers: {
-              Authorization: `Bearer ${accessToken}`
-            }
-          });
-        }
-
-        if (driveRes.ok) {
-          const arrayBuffer = await driveRes.arrayBuffer();
-          const buffer = Buffer.from(arrayBuffer);
+          let requestOptions: any;
           
-          // Cache in memory for subsequent downloads from other devices
-          db.saveFileBuffer(fileId, buffer);
+          if (depth === 0) {
+            requestOptions = {
+              hostname: 'www.googleapis.com',
+              path: `/drive/v3/files/${fileIdStr}?alt=media&acknowledgeAbuse=true&supportsAllDrives=true`,
+              method: 'GET',
+              headers: {
+                'Authorization': `Bearer ${token}`,
+                'Accept-Encoding': 'identity'
+              }
+            };
+          } else {
+            const parsedUrl = new URL(fileIdStr); // At depth > 0, fileIdStr is the redirect URL
+            requestOptions = {
+              hostname: parsedUrl.hostname,
+              path: parsedUrl.pathname + parsedUrl.search,
+              method: 'GET',
+              headers: {
+                'Accept-Encoding': 'identity'
+              }
+            };
+            // Do NOT forward Authorization header to the redirected googleusercontent domain
+            // as it can cause 401/403 errors on the signed URL.
+          }
 
-          res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
-          res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(file.file_name)}"`);
-          res.setHeader('Content-Length', buffer.length);
-          res.send(buffer);
-          return;
-        } else {
-          const errorBody = await driveRes.text();
-          console.error(`[Drive Media Download Failed ${driveRes.status}]:`, errorBody);
-        }
+          const driveReq = https.request(requestOptions, (driveRes: any) => {
+            // Handle 401 on initial request (needs token refresh)
+            if (driveRes.statusCode === 401 && depth === 0) {
+              resolve(false);
+              return;
+            }
+
+            // Handle Redirects
+            if (driveRes.statusCode >= 300 && driveRes.statusCode < 400 && driveRes.headers.location) {
+              downloadFileWithRedirect(token, driveRes.headers.location, depth + 1).then(resolve);
+              return;
+            }
+
+            if (driveRes.statusCode >= 400) {
+              console.error('[Drive Download HTTP Error]:', driveRes.statusCode);
+              if (!res.headersSent) res.status(driveRes.statusCode).send('Failed to fetch from Google Drive');
+              resolve(true); 
+              return;
+            }
+
+            // Successfully reached the final file payload
+            const safeAsciiName = (file.file_name || 'file')
+              .replace(/["\\]/g, '_')
+              .replace(/[^\x20-\x7E]/g, '_');
+            const encodedName = encodeURIComponent(file.file_name || 'file');
+
+            res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
+            res.setHeader(
+              'Content-Disposition',
+              `attachment; filename="${safeAsciiName}"; filename*=UTF-8''${encodedName}`
+            );
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+            res.setHeader('X-Content-Type-Options', 'nosniff');
+            
+            // Set Content-Length if provided by the final storage server
+            if (driveRes.headers['content-length']) {
+              res.setHeader('Content-Length', driveRes.headers['content-length']);
+            } else if (file.file_size) {
+               // Fallback to DB size if streaming directly
+               res.setHeader('Content-Length', file.file_size.toString());
+            }
+            res.setHeader('Accept-Ranges', 'none'); 
+
+            driveRes.pipe(res);
+            driveRes.on('end', () => resolve(true));
+            driveRes.on('error', (err: any) => {
+              console.error('[Drive Download Stream Error]:', err);
+              if (!res.headersSent) res.status(500).send('Stream error during download.');
+              else res.end();
+              resolve(true);
+            });
+          });
+
+          driveReq.on('error', (err: any) => {
+            console.error('[Drive Download Request Error]:', err);
+            if (!res.headersSent) res.status(500).send('Request error');
+            resolve(false);
+          });
+
+          driveReq.end();
+        });
+      };
+
+      let success = await downloadFileWithRedirect(accessToken, file.drive_file_id);
+      
+      // If unauthorized on the very first try, refresh token and retry once
+      if (!success && driveConnection.refresh_token) {
+        console.warn('[Drive Download]: 401 Unauthorized or request error, refreshing token and retrying...');
+        driveConnection.token_expiry = new Date(0).toISOString();
+        const freshToken = await getValidDriveAccessToken(driveConnection);
+        success = await downloadFileWithRedirect(freshToken, file.drive_file_id);
       }
 
-      // 3. Fallback: If direct download URL is available
-      if (file.download_url && file.download_url.startsWith('http')) {
-        res.redirect(file.download_url);
-        return;
+      if (!success && !res.headersSent) {
+        res.status(502).send('Unable to retrieve file from secure storage.');
       }
 
-      res.status(404).send('File content not available.');
     } catch (err: any) {
-      console.error('[API /drive/download error]:', err);
-      res.status(500).send('Failed to download file.');
+      console.error('[API /drive/download error]:', err.stack || err);
+      if (!res.headersSent) res.status(500).send('Failed to download file.');
     }
   });
 
@@ -625,6 +703,13 @@ async function startServer() {
       console.error('[API /room DELETE error]:', err);
       res.status(500).json({ error: err.message || 'Failed to delete room.' });
     }
+  });
+
+  app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: 'File exceeds the 25 MB maximum size.' });
+    }
+    next(err);
   });
 
   if (process.env.NODE_ENV !== 'production') {

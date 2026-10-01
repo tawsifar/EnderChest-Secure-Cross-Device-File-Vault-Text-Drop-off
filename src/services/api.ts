@@ -147,6 +147,68 @@ class ApiService {
   }
 
   /**
+   * Download a file cleanly with progress tracking, stream validation, and error detection.
+   */
+  async downloadFile(
+    token: string,
+    file: { id: string; name: string; size: number; mimeType?: string },
+    onProgress?: (pct: number) => void
+  ): Promise<void> {
+    const url = `/api/drive/download/${file.id}?token=${encodeURIComponent(token)}`;
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      let errorText = 'Download failed';
+      try {
+        errorText = await response.text();
+      } catch {}
+      throw new Error(errorText || `Download failed with HTTP ${response.status}`);
+    }
+
+    const contentLength = response.headers.get('content-length') || file.size.toString();
+    const total = parseInt(contentLength, 10);
+
+    let blob: Blob;
+    if (response.body && total && !isNaN(total) && total > 0) {
+      const reader = response.body.getReader();
+      let receivedLength = 0;
+      const chunks: Uint8Array[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        receivedLength += value.length;
+        if (onProgress) {
+          onProgress(Math.min(99, Math.round((receivedLength / total) * 100)));
+        }
+      }
+
+      blob = new Blob(chunks, { type: file.mimeType || 'application/octet-stream' });
+    } else {
+      blob = await response.blob();
+    }
+
+    if (onProgress) onProgress(100);
+
+    // Save to user disk using object URL
+    const blobUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.style.display = 'none';
+    link.href = blobUrl;
+    link.download = file.name;
+    document.body.appendChild(link);
+    link.click();
+
+    setTimeout(() => {
+      if (document.body.contains(link)) {
+        document.body.removeChild(link);
+      }
+      window.URL.revokeObjectURL(blobUrl);
+    }, 1000);
+  }
+
+  /**
    * Delete a specific file from room and Google Drive.
    */
   async deleteFile(token: string, fileId: string): Promise<void> {

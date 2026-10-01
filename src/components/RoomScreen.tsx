@@ -59,6 +59,8 @@ export default function RoomScreen({
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [downloadingFileId, setDownloadingFileId] = useState<string | null>(null);
+  const [downloadPercent, setDownloadPercent] = useState<number | null>(null);
 
   // Deletion States
   const [fileToDelete, setFileToDelete] = useState<RoomFile | null>(null);
@@ -175,6 +177,16 @@ export default function RoomScreen({
   const handleFilesSelected = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setFileError(null);
+
+    const MAX_FILE_SIZE = 25 * 1024 * 1024;
+    for (let i = 0; i < files.length; i++) {
+      if (files[i].size > MAX_FILE_SIZE) {
+        setFileError(`${files[i].name} is ${formatBytes(files[i].size)} — 25 MB max per file`);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        return;
+      }
+    }
+
     setIsUploading(true);
 
     try {
@@ -202,6 +214,26 @@ export default function RoomScreen({
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
+    }
+  };
+
+  // Safe file download handler
+  const handleDownloadFile = async (file: RoomFile) => {
+    if (downloadingFileId) return;
+    setFileError(null);
+    setDownloadingFileId(file.id);
+    setDownloadPercent(0);
+
+    try {
+      await api.downloadFile(sessionToken, file, (pct) => {
+        setDownloadPercent(pct);
+      });
+    } catch (err: any) {
+      console.error('Download error:', err);
+      setFileError(`Download failed for "${file.name}": ${err.message || 'Network error'}`);
+    } finally {
+      setDownloadingFileId(null);
+      setDownloadPercent(null);
     }
   };
 
@@ -556,7 +588,7 @@ export default function RoomScreen({
                     Drop files here, or <span className="text-emerald-400 underline underline-offset-4 decoration-emerald-500/40 hover:decoration-emerald-400">browse</span>
                   </span>
                   <span className="text-[12px] font-mono text-slate-500">
-                    Directly upload to vault's secure storage
+                    Directly upload to vault's secure storage (Maximum file size: 25 MB per file)
                   </span>
                 </>
               )}
@@ -613,16 +645,29 @@ export default function RoomScreen({
                       </div>
 
                       <div className="flex items-center gap-1.5 shrink-0">
-                        <a
+                        <button
                           id={`download-file-${file.id}`}
-                          href={`${file.downloadUrl}${file.downloadUrl.includes('?') ? '&' : '?'}token=${sessionToken}`}
-                          download={file.name}
-                          className="inline-flex items-center gap-1.5 px-3 py-2 text-emerald-400 hover:text-emerald-300 text-[12px] font-mono rounded-lg transition-colors cursor-pointer border border-emerald-500/30 hover:bg-emerald-500/10"
-                          title="Download file"
+                          onClick={() => handleDownloadFile(file)}
+                          disabled={downloadingFileId === file.id}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 text-emerald-400 hover:text-emerald-300 disabled:text-emerald-400/60 text-[12px] font-mono rounded-lg transition-colors cursor-pointer border border-emerald-500/30 hover:bg-emerald-500/10 active:scale-95 disabled:cursor-wait"
+                          title="Download verified file"
                         >
-                          <Download className="w-4 h-4" />
-                          <span className="hidden sm:inline">Download</span>
-                        </a>
+                          {downloadingFileId === file.id ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-400" />
+                              <span className="hidden sm:inline">
+                                {downloadPercent !== null && downloadPercent > 0
+                                  ? `${downloadPercent}%`
+                                  : 'Downloading...'}
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              <Download className="w-3.5 h-3.5" />
+                              <span className="hidden sm:inline">Download</span>
+                            </>
+                          )}
+                        </button>
 
                         <button
                           id={`delete-file-${file.id}`}

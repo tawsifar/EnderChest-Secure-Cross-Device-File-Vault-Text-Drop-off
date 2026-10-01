@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { ArrowRight, Sparkles, ShieldCheck, Lock, HardDrive, KeyRound } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ArrowRight, Sparkles, ShieldCheck, Lock, HardDrive, KeyRound, X } from 'lucide-react';
 import EnderChestLogo from './EnderChestLogo.tsx';
 
 interface HomeScreenProps {
@@ -8,13 +8,43 @@ interface HomeScreenProps {
   error: string | null;
 }
 
-export default function HomeScreen({ onEnterRoom, loading, error }: HomeScreenProps) {
+export default function HomeScreen({ onEnterRoom, loading, error: outerError }: HomeScreenProps) {
   const [vaultCode, setVaultCode] = useState('');
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [showNotice, setShowNotice] = useState(true);
+  const [isNoticeClosing, setIsNoticeClosing] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const error = outerError || localError;
+
+  useEffect(() => {
+    const fadeTimer = setTimeout(() => {
+      setIsNoticeClosing(true);
+    }, 5600);
+
+    const removeTimer = setTimeout(() => {
+      setShowNotice(false);
+    }, 6000);
+
+    return () => {
+      clearTimeout(fadeTimer);
+      clearTimeout(removeTimer);
+    };
+  }, []);
+
+  const handleDismissNotice = () => {
+    setIsNoticeClosing(true);
+    setTimeout(() => setShowNotice(false), 200);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!vaultCode.trim() || loading) return;
-    onEnterRoom(vaultCode.trim());
+    setLocalError(null);
+    try {
+      await onEnterRoom(vaultCode.trim());
+    } catch (err: any) {
+      setLocalError(err.message || 'An error occurred.');
+    }
   };
 
   const handleGenerateRandom = () => {
@@ -29,6 +59,58 @@ export default function HomeScreen({ onEnterRoom, loading, error }: HomeScreenPr
 
   return (
     <div className="w-full max-w-[1200px] mx-auto px-4 sm:px-6 py-12 flex flex-col items-center relative z-10 fadeUp">
+      {/* 3-Second Development Prototype Notification */}
+      {showNotice && (
+        <div
+          id="prototype-notification"
+          className={`fixed top-20 sm:top-24 left-1/2 -translate-x-1/2 z-50 w-[92%] max-w-[540px] transition-all duration-300 pointer-events-auto ${
+            isNoticeClosing ? 'opacity-0 -translate-y-2 scale-95' : 'opacity-100 translate-y-0 scale-100'
+          }`}
+          role="status"
+          aria-live="polite"
+        >
+          <div className="relative bg-[#090d14]/95 border border-emerald-500/40 rounded-2xl p-3.5 sm:p-4 shadow-2xl shadow-black/80 backdrop-blur-xl flex items-start sm:items-center gap-3 overflow-hidden">
+            {/* Ambient top glow */}
+            <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-emerald-400 to-transparent" />
+
+            <div className="p-2 rounded-xl bg-emerald-950/60 border border-emerald-500/30 text-emerald-400 shrink-0">
+              <Sparkles className="w-4 h-4 animate-pulse" />
+            </div>
+
+            <div className="flex-1 min-w-0 pr-1">
+              <div className="flex items-center gap-2 mb-0.5">
+                <span className="text-[11px] font-mono font-bold uppercase tracking-wider text-emerald-400 bg-emerald-950/50 px-2 py-0.5 rounded-md border border-emerald-500/20">
+                  Prototype Preview
+                </span>
+              </div>
+              <p className="text-xs sm:text-[13px] text-slate-200 leading-snug font-sans">
+                EnderChest is an active development prototype — you’re welcome to use it for quick, lightweight file drops and notes!
+              </p>
+            </div>
+
+            <button
+              onClick={handleDismissNotice}
+              className="p-1.5 text-slate-400 hover:text-slate-100 rounded-lg hover:bg-white/5 transition-colors shrink-0 cursor-pointer"
+              title="Dismiss notification"
+              aria-label="Dismiss notification"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            {/* 6-Second Countdown Progress Bar */}
+            <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-white/5 overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-emerald-500 to-teal-400"
+                style={{
+                  width: '100%',
+                  animation: 'shrinkWidth 6s linear forwards',
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Brand Header */}
       <div className="text-center mb-10">
         <div className="inline-flex items-center justify-center p-3 mb-4 rounded-2xl bg-black/40 border border-white/10 shadow-xl backdrop-blur-md">
@@ -69,13 +151,16 @@ export default function HomeScreen({ onEnterRoom, loading, error }: HomeScreenPr
                 id="vault-code-input"
                 type="text"
                 value={vaultCode}
-                onChange={(e) => setVaultCode(e.target.value)}
+                onChange={(e) => {
+                  setVaultCode(e.target.value);
+                  setLocalError(null);
+                }}
                 placeholder="e.g. obsidian-vault-404 or quick-drop"
                 autoFocus
                 autoComplete="off"
                 spellCheck="false"
                 disabled={loading}
-                className="w-full pl-12 pr-4 py-3.5 bg-[#06090d]/80 border border-white/10 focus:border-emerald-500/50 rounded-xl text-emerald-300 placeholder:text-slate-600 font-mono text-[15px] focus:outline-none focus:bg-[#06090d] transition-all shadow-inner"
+                className="w-full pl-12 pr-4 py-3.5 bg-[#06090d]/80 border border-white/10 focus:border-emerald-500/50 rounded-xl text-emerald-300 placeholder:text-slate-600 font-mono text-[15px] focus:outline-none focus:bg-[#06090d] transition-all shadow-inner disabled:opacity-50"
               />
             </div>
           </div>

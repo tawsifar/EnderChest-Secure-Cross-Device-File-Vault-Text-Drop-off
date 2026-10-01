@@ -156,3 +156,12 @@
 .silver-neon-btn:hover {
   background-color: #1e293b; /* Slate 800 solid hover */
 }
+
+@keyframes shrinkWidth {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}

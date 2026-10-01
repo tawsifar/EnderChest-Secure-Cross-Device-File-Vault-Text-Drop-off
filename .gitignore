@@ -4,5 +4,13 @@ dist/
 coverage/
 .DS_Store
 *.log
-.env*
-.env.example
+.env
+.env.*
+!.env.example
+
+# AI Studio internal files & caches
+.aistudio
+.aistudio/
+assets/.aistudio/
+*.aistudio
+
